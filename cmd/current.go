@@ -1,0 +1,31 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+	"github.com/sratabix/cem/internal/profile"
+)
+
+var currentCmd = &cobra.Command{
+	Use:   "current",
+	Short: "Print the active profile name",
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := profile.EnsureInitialized(); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+
+		name, err := profile.Current()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+		fmt.Println(name)
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(currentCmd)
+}
