@@ -3,11 +3,22 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 )
 
-var version = "0.2.0"
+var version = ""
+
+func getVersion() string {
+	if version != "" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
+}
 
 var toolFlag string
 
@@ -25,6 +36,6 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.Version = version
+	rootCmd.Version = getVersion()
 	rootCmd.PersistentFlags().StringVarP(&toolFlag, "tool", "t", "claude", "tool to manage (claude, gemini, copilot)")
 }
