@@ -9,7 +9,7 @@ import (
 )
 
 type State struct {
-	Active string `json:"active"`
+	Active map[string]string `json:"active"`
 }
 
 func ReadState() (*State, error) {
@@ -20,6 +20,9 @@ func ReadState() (*State, error) {
 	var s State
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("invalid state.json: %w", err)
+	}
+	if s.Active == nil {
+		s.Active = make(map[string]string)
 	}
 	return &s, nil
 }
@@ -37,32 +40,47 @@ func IsInitialized() bool {
 	return err == nil
 }
 
-func Init() error {
-	if IsInitialized() {
-		return fmt.Errorf("cem is already initialized (found %s)", CemDir())
+func IsToolInitialized(tool string) bool {
+	_, err := os.Stat(ToolProfilesDir(tool))
+	return err == nil
+}
+
+func Init(tool string) error {
+	t, ok := Tools[tool]
+	if !ok {
+		return ValidateTool(tool)
 	}
 
-	profileDir := ProfileDir("default")
+	if IsToolInitialized(tool) {
+		return fmt.Errorf("%s profiles already initialized (found %s)", tool, ToolProfilesDir(tool))
+	}
+
+	profileDir := ToolProfileDir(tool, "default")
 	if err := os.MkdirAll(profileDir, 0755); err != nil {
 		return fmt.Errorf("failed to create profile directory: %w", err)
 	}
 
-	claudeDir := HomeClaudeDir()
-	claudeJSON := HomeClaudeJSON()
+	for _, item := range t.Items {
+		src := homePath(item.name)
+		dst := filepath.Join(profileDir, item.name)
+		if err := importOrCreate(src, dst, item.isDir); err != nil {
+			return err
+		}
+	}
 
-	if err := importOrCreate(claudeDir, filepath.Join(profileDir, ".claude"), true); err != nil {
+	if err := createSymlinks(tool, "default"); err != nil {
 		return err
 	}
 
-	if err := importOrCreate(claudeJSON, filepath.Join(profileDir, ".claude.json"), false); err != nil {
-		return err
+	state := &State{Active: make(map[string]string)}
+	if IsInitialized() {
+		existing, err := ReadState()
+		if err == nil {
+			state = existing
+		}
 	}
-
-	if err := createSymlinks("default"); err != nil {
-		return err
-	}
-
-	return WriteState(&State{Active: "default"})
+	state.Active[tool] = "default"
+	return WriteState(state)
 }
 
 func importOrCreate(src, dst string, isDir bool) error {
@@ -94,43 +112,62 @@ func createEmpty(path string, isDir bool) error {
 	return os.WriteFile(path, []byte("{}"), 0644)
 }
 
-func Create(name string) error {
-	dir := ProfileDir(name)
+func Create(tool, name string) error {
+	t, ok := Tools[tool]
+	if !ok {
+		return ValidateTool(tool)
+	}
+
+	dir := ToolProfileDir(tool, name)
 	if _, err := os.Stat(dir); err == nil {
-		return fmt.Errorf("profile %q already exists", name)
+		return fmt.Errorf("%s profile %q already exists", tool, name)
 	}
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create profile directory: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Join(dir, ".claude"), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, ".claude.json"), []byte("{}"), 0644)
-}
-
-func Switch(name string) error {
-	if err := CheckClaudeSafe(); err != nil {
-		return err
-	}
-
-	dir := ProfileDir(name)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return fmt.Errorf("profile %q does not exist", name)
-	}
-
-	for _, path := range []string{HomeClaudeDir(), HomeClaudeJSON()} {
-		if err := removeIfSymlink(path); err != nil {
+	for _, item := range t.Items {
+		path := filepath.Join(dir, item.name)
+		if err := createEmpty(path, item.isDir); err != nil {
 			return err
 		}
 	}
 
-	if err := createSymlinks(name); err != nil {
+	return nil
+}
+
+func Switch(tool, name string) error {
+	t, ok := Tools[tool]
+	if !ok {
+		return ValidateTool(tool)
+	}
+
+	if err := CheckSafe(tool); err != nil {
 		return err
 	}
 
-	return WriteState(&State{Active: name})
+	dir := ToolProfileDir(tool, name)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return fmt.Errorf("%s profile %q does not exist", tool, name)
+	}
+
+	for _, item := range t.Items {
+		if err := removeIfSymlink(homePath(item.name)); err != nil {
+			return err
+		}
+	}
+
+	if err := createSymlinks(tool, name); err != nil {
+		return err
+	}
+
+	state, err := ReadState()
+	if err != nil {
+		return err
+	}
+	state.Active[tool] = name
+	return WriteState(state)
 }
 
 func removeIfSymlink(path string) error {
@@ -144,23 +181,29 @@ func removeIfSymlink(path string) error {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return os.Remove(path)
 	}
-	return fmt.Errorf("%s exists but is not a symlink — refusing to remove (run 'cem init' first)", path)
+	return fmt.Errorf("%s exists but is not a symlink — refusing to remove (run 'cem init --tool <tool>' first)", path)
 }
 
-func createSymlinks(name string) error {
-	dir := ProfileDir(name)
+func createSymlinks(tool, name string) error {
+	t := Tools[tool]
+	dir := ToolProfileDir(tool, name)
 
-	if err := os.Symlink(filepath.Join(dir, ".claude"), HomeClaudeDir()); err != nil {
-		return fmt.Errorf("failed to create symlink for .claude: %w", err)
-	}
-	if err := os.Symlink(filepath.Join(dir, ".claude.json"), HomeClaudeJSON()); err != nil {
-		return fmt.Errorf("failed to create symlink for .claude.json: %w", err)
+	for _, item := range t.Items {
+		target := filepath.Join(dir, item.name)
+		link := homePath(item.name)
+		if err := os.Symlink(target, link); err != nil {
+			return fmt.Errorf("failed to create symlink for %s: %w", item.name, err)
+		}
 	}
 	return nil
 }
 
-func List() ([]string, error) {
-	entries, err := os.ReadDir(ProfilesDir())
+func List(tool string) ([]string, error) {
+	if err := ValidateTool(tool); err != nil {
+		return nil, err
+	}
+
+	entries, err := os.ReadDir(ToolProfilesDir(tool))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read profiles directory: %w", err)
 	}
@@ -175,23 +218,36 @@ func List() ([]string, error) {
 	return names, nil
 }
 
-func Current() (string, error) {
+func Current(tool string) (string, error) {
+	if err := ValidateTool(tool); err != nil {
+		return "", err
+	}
+
 	state, err := ReadState()
 	if err != nil {
 		return "", fmt.Errorf("failed to read state: %w", err)
 	}
-	return state.Active, nil
+	active, ok := state.Active[tool]
+	if !ok {
+		return "", fmt.Errorf("no active profile for %s (run 'cem init --tool %s' first)", tool, tool)
+	}
+	return active, nil
 }
 
-func Rename(oldName, newName string) error {
-	oldDir := ProfileDir(oldName)
-	newDir := ProfileDir(newName)
+func Rename(tool, oldName, newName string) error {
+	t, ok := Tools[tool]
+	if !ok {
+		return ValidateTool(tool)
+	}
+
+	oldDir := ToolProfileDir(tool, oldName)
+	newDir := ToolProfileDir(tool, newName)
 
 	if _, err := os.Stat(oldDir); os.IsNotExist(err) {
-		return fmt.Errorf("profile %q does not exist", oldName)
+		return fmt.Errorf("%s profile %q does not exist", tool, oldName)
 	}
 	if _, err := os.Stat(newDir); err == nil {
-		return fmt.Errorf("profile %q already exists", newName)
+		return fmt.Errorf("%s profile %q already exists", tool, newName)
 	}
 
 	if err := os.Rename(oldDir, newDir); err != nil {
@@ -202,26 +258,26 @@ func Rename(oldName, newName string) error {
 	if err != nil {
 		return err
 	}
-	if state.Active == oldName {
-		for _, path := range []string{HomeClaudeDir(), HomeClaudeJSON()} {
-			if err := removeIfSymlink(path); err != nil {
+	if state.Active[tool] == oldName {
+		for _, item := range t.Items {
+			if err := removeIfSymlink(homePath(item.name)); err != nil {
 				return err
 			}
 		}
-		if err := createSymlinks(newName); err != nil {
+		if err := createSymlinks(tool, newName); err != nil {
 			return err
 		}
-		state.Active = newName
+		state.Active[tool] = newName
 		return WriteState(state)
 	}
 
 	return nil
 }
 
-func EnsureInitialized() error {
-	if !IsInitialized() {
-		fmt.Println("cem not initialized. Running first-time setup...")
-		return Init()
+func EnsureToolInitialized(tool string) error {
+	if !IsToolInitialized(tool) {
+		fmt.Printf("cem not initialized for %s. Running first-time setup...\n", tool)
+		return Init(tool)
 	}
 	return nil
 }

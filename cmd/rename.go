@@ -13,18 +13,22 @@ var renameCmd = &cobra.Command{
 	Short: "Rename a profile",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := profile.EnsureInitialized(); err != nil {
+		if err := profile.ValidateTool(toolFlag); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+		if err := profile.EnsureToolInitialized(toolFlag); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
 
 		oldName := args[0]
 		newName := args[1]
-		if err := profile.Rename(oldName, newName); err != nil {
+		if err := profile.Rename(toolFlag, oldName, newName); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Renamed profile %q to %q.\n", oldName, newName)
+		fmt.Printf("Renamed %s profile %q to %q.\n", toolFlag, oldName, newName)
 	},
 }
 

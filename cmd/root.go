@@ -7,12 +7,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "0.1.0"
+var version = "0.2.0"
+
+var toolFlag string
 
 var rootCmd = &cobra.Command{
 	Use:   "cem",
-	Short: "Claude Environment Manager — manage multiple Claude Code profiles",
-	Long:  "cem lets you maintain multiple Claude Code profiles (~/.claude and ~/.claude.json) and switch between them using symlinks.",
+	Short: "Claude Environment Manager — manage profiles for Claude, Gemini, and Copilot",
+	Long:  "cem lets you maintain separate profiles for AI coding tools (Claude, Gemini, Copilot) and switch between them using symlinks. Use --tool to specify which tool to manage (defaults to claude).",
 }
 
 func Execute() {
@@ -24,4 +26,5 @@ func Execute() {
 
 func init() {
 	rootCmd.Version = version
+	rootCmd.PersistentFlags().StringVarP(&toolFlag, "tool", "t", "claude", "tool to manage (claude, gemini, copilot)")
 }

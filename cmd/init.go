@@ -10,13 +10,17 @@ import (
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize cem and import existing Claude config as the default profile",
+	Short: "Initialize cem for a tool and import existing config as the default profile",
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := profile.Init(); err != nil {
+		if err := profile.ValidateTool(toolFlag); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
-		fmt.Println("Initialized cem with 'default' profile.")
+		if err := profile.Init(toolFlag); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Initialized cem for %s with 'default' profile.\n", toolFlag)
 	},
 }
 

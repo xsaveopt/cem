@@ -9,12 +9,12 @@ import (
 func TestHasLockFilesNone(t *testing.T) {
 	home := setupTestHome(t)
 
-		claudeDir := filepath.Join(home, ".claude")
+	claudeDir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(claudeDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	has, err := HasLockFiles()
+	has, err := HasLockFiles("claude")
 	if err != nil {
 		t.Fatalf("HasLockFiles() error: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestHasLockFilesDetectsLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	has, err := HasLockFiles()
+	has, err := HasLockFiles("claude")
 	if err != nil {
 		t.Fatalf("HasLockFiles() error: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestHasLockFilesDetectsPid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	has, err := HasLockFiles()
+	has, err := HasLockFiles("claude")
 	if err != nil {
 		t.Fatalf("HasLockFiles() error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestHasLockFilesDetectsNestedSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	has, err := HasLockFiles()
+	has, err := HasLockFiles("claude")
 	if err != nil {
 		t.Fatalf("HasLockFiles() error: %v", err)
 	}
@@ -89,11 +89,69 @@ func TestHasLockFilesDetectsNestedSocket(t *testing.T) {
 
 func TestHasLockFilesMissingDir(t *testing.T) {
 	setupTestHome(t)
-	has, err := HasLockFiles()
+	has, err := HasLockFiles("claude")
 	if err != nil {
 		t.Fatalf("HasLockFiles() error: %v", err)
 	}
 	if has {
 		t.Error("HasLockFiles() = true, want false (dir doesn't exist)")
+	}
+}
+
+func TestHasLockFilesGemini(t *testing.T) {
+	home := setupTestHome(t)
+
+	geminiDir := filepath.Join(home, ".gemini")
+	if err := os.MkdirAll(geminiDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(geminiDir, "session.lock"), []byte("1234"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	has, err := HasLockFiles("gemini")
+	if err != nil {
+		t.Fatalf("HasLockFiles(gemini) error: %v", err)
+	}
+	if !has {
+		t.Error("HasLockFiles(gemini) = false, want true")
+	}
+
+	has, err = HasLockFiles("claude")
+	if err != nil {
+		t.Fatalf("HasLockFiles(claude) error: %v", err)
+	}
+	if has {
+		t.Error("HasLockFiles(claude) = true, want false (lock is in gemini dir)")
+	}
+}
+
+func TestHasLockFilesCopilot(t *testing.T) {
+	home := setupTestHome(t)
+
+	copilotDir := filepath.Join(home, ".copilot")
+	if err := os.MkdirAll(copilotDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(copilotDir, "agent.pid"), []byte("5555"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	has, err := HasLockFiles("copilot")
+	if err != nil {
+		t.Fatalf("HasLockFiles(copilot) error: %v", err)
+	}
+	if !has {
+		t.Error("HasLockFiles(copilot) = false, want true")
+	}
+}
+
+func TestHasLockFilesInvalidTool(t *testing.T) {
+	setupTestHome(t)
+	_, err := HasLockFiles("vscode")
+	if err == nil {
+		t.Fatal("HasLockFiles(vscode) should return error for unknown tool")
 	}
 }

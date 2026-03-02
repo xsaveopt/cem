@@ -37,8 +37,11 @@ func IsClaudeRunning() (bool, error) {
 	return false, nil
 }
 
-func HasLockFiles() (bool, error) {
-	claudeDir := HomeClaudeDir()
+func HasLockFiles(tool string) (bool, error) {
+	t, ok := Tools[tool]
+	if !ok {
+		return false, ValidateTool(tool)
+	}
 
 	lockPatterns := []string{
 		"*.lock",
@@ -47,21 +50,27 @@ func HasLockFiles() (bool, error) {
 		"*.socket",
 	}
 
-	for _, pattern := range lockPatterns {
-		matches, err := filepath.Glob(filepath.Join(claudeDir, pattern))
-		if err != nil {
-			return false, err
+	for _, item := range t.Items {
+		if !item.isDir {
+			continue
 		}
-		if len(matches) > 0 {
-			return true, nil
-		}
+		dir := homePath(item.name)
+		for _, pattern := range lockPatterns {
+			matches, err := filepath.Glob(filepath.Join(dir, pattern))
+			if err != nil {
+				return false, err
+			}
+			if len(matches) > 0 {
+				return true, nil
+			}
 
-		matches, err = filepath.Glob(filepath.Join(claudeDir, "*", pattern))
-		if err != nil {
-			return false, err
-		}
-		if len(matches) > 0 {
-			return true, nil
+			matches, err = filepath.Glob(filepath.Join(dir, "*", pattern))
+			if err != nil {
+				return false, err
+			}
+			if len(matches) > 0 {
+				return true, nil
+			}
 		}
 	}
 
@@ -70,24 +79,27 @@ func HasLockFiles() (bool, error) {
 
 var skipSafetyCheck bool
 
-func CheckClaudeSafe() error {
+func CheckSafe(tool string) error {
 	if skipSafetyCheck {
 		return nil
 	}
-	running, err := IsClaudeRunning()
-	if err != nil {
-		return fmt.Errorf("failed to check running processes: %w", err)
-	}
-	if running {
-		return fmt.Errorf("claude appears to be running; please close all Claude instances before switching profiles")
+
+	if tool == "claude" {
+		running, err := IsClaudeRunning()
+		if err != nil {
+			return fmt.Errorf("failed to check running processes: %w", err)
+		}
+		if running {
+			return fmt.Errorf("claude appears to be running; please close all Claude instances before switching profiles")
+		}
 	}
 
-	hasLocks, err := HasLockFiles()
+	hasLocks, err := HasLockFiles(tool)
 	if err != nil {
 		return fmt.Errorf("failed to check lock files: %w", err)
 	}
 	if hasLocks {
-		return fmt.Errorf("lock files detected in ~/.claude/; please close all Claude instances before switching profiles")
+		return fmt.Errorf("lock files detected in %s directories; please close all instances before switching profiles", tool)
 	}
 
 	return nil

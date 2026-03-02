@@ -13,17 +13,21 @@ var createCmd = &cobra.Command{
 	Short: "Create a new empty profile",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := profile.EnsureInitialized(); err != nil {
+		if err := profile.ValidateTool(toolFlag); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+		if err := profile.EnsureToolInitialized(toolFlag); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
 
 		name := args[0]
-		if err := profile.Create(name); err != nil {
+		if err := profile.Create(toolFlag, name); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Created profile %q.\n", name)
+		fmt.Printf("Created %s profile %q.\n", toolFlag, name)
 	},
 }
 

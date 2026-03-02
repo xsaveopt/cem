@@ -12,12 +12,16 @@ var currentCmd = &cobra.Command{
 	Use:   "current",
 	Short: "Print the active profile name",
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := profile.EnsureInitialized(); err != nil {
+		if err := profile.ValidateTool(toolFlag); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+		if err := profile.EnsureToolInitialized(toolFlag); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
 
-		name, err := profile.Current()
+		name, err := profile.Current(toolFlag)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
