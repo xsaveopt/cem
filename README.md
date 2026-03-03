@@ -13,7 +13,7 @@ Manage multiple profiles for AI coding tools. `cem` supports **Claude**, **Gemin
 **Go:**
 
 ```sh
-go install github.com/sratabix/cem@latest
+go install github.com/sratabix/cem/v2@latest
 ```
 
 **Binary:**

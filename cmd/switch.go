@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/sratabix/cem/internal/profile"
+	"github.com/sratabix/cem/v2/internal/profile"
 )
 
 var switchCmd = &cobra.Command{
