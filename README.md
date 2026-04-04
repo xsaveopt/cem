@@ -2,11 +2,11 @@
 
 Manage multiple profiles for AI coding tools. `cem` supports **Claude**, **Gemini**, and **Copilot**, storing named profiles in `~/.config/cem/profiles/<tool>/` and symlinking the active one to the tool's home directory config.
 
-| Tool    | Managed paths                 |
-| ------- | ----------------------------- |
-| claude  | `~/.claude`, `~/.claude.json` |
-| gemini  | `~/.gemini`                   |
-| copilot | `~/.copilot`                  |
+| Tool    | Managed paths                                           |
+| ------- | ------------------------------------------------------- |
+| claude  | `~/.claude`, `~/.claude.json`, macOS Keychain credentials |
+| gemini  | `~/.gemini`                                             |
+| copilot | `~/.copilot`                                            |
 
 ## Install
 
@@ -58,3 +58,12 @@ cem list    -t copilot          # list copilot profiles
 ```
 
 `cem switch` will refuse to run if the tool is detected as running (process detection for Claude, lock file detection for all tools).
+
+### macOS Keychain (Claude)
+
+On macOS, Claude Code stores its login credentials in the system Keychain under the service `"Claude Code-credentials"`. When switching Claude profiles, `cem` automatically:
+
+- **Saves** the current profile's credential to a private `cem` Keychain entry.
+- **Restores** the target profile's stored credential as the active one.
+
+If a profile has no stored credential (e.g. a freshly-created profile), the active Keychain entry is cleared so Claude Code will prompt for re-authentication. Keychain errors are non-fatal — a warning is printed but the file-based switch still completes.

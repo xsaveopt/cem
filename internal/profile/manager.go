@@ -8,6 +8,7 @@ import (
 	"sort"
 )
 
+
 type State struct {
 	Active map[string]string `json:"active"`
 }
@@ -152,6 +153,19 @@ func Switch(tool, name string) error {
 		return fmt.Errorf("%s profile %q does not exist", tool, name)
 	}
 
+	state, err := ReadState()
+	if err != nil {
+		return err
+	}
+	currentProfile := state.Active[tool]
+
+	// Back up the current profile's keychain credential before switching.
+	if tool == "claude" && currentProfile != "" && currentProfile != name {
+		if err := SaveClaudeKeychain(currentProfile); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to save keychain credentials for profile %q: %v\n", currentProfile, err)
+		}
+	}
+
 	for _, item := range t.Items {
 		if err := removeIfSymlink(homePath(item.name)); err != nil {
 			return err
@@ -162,10 +176,13 @@ func Switch(tool, name string) error {
 		return err
 	}
 
-	state, err := ReadState()
-	if err != nil {
-		return err
+	// Restore the target profile's keychain credential.
+	if tool == "claude" && currentProfile != name {
+		if err := RestoreClaudeKeychain(name); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to restore keychain credentials for profile %q: %v\n", name, err)
+		}
 	}
+
 	state.Active[tool] = name
 	return WriteState(state)
 }

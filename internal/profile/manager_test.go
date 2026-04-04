@@ -12,9 +12,11 @@ func setupTestHome(t *testing.T) string {
 	dir := t.TempDir()
 	overrideHome = dir
 	skipSafetyCheck = true
+	skipKeychainOps = true
 	t.Cleanup(func() {
 		overrideHome = ""
 		skipSafetyCheck = false
+		skipKeychainOps = false
 	})
 	return dir
 }

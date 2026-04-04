@@ -9,29 +9,32 @@ import (
 )
 
 func IsClaudeRunning() (bool, error) {
-	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("tasklist")
-	} else {
-		cmd = exec.Command("ps", "aux")
-	}
-
-	out, err := cmd.Output()
-	if err != nil {
-		return false, err
-	}
-
-	for _, line := range strings.Split(string(out), "\n") {
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "claude") &&
-			!strings.Contains(lower, "cem") &&
-			!strings.Contains(lower, "claude.json") {
-			if strings.Contains(lower, "/claude") ||
-				strings.Contains(lower, "claude ") ||
-				strings.Contains(lower, "claude-") {
+		out, err := exec.Command("tasklist").Output()
+		if err != nil {
+			return false, err
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(strings.ToLower(line), "claude.exe") {
 				return true, nil
 			}
 		}
+		return false, nil
+	}
+
+	// macOS / Linux: use pgrep for precise process-name matching.
+	// pgrep exits 1 (with no output) when nothing matches — that's not an error.
+
+	if runtime.GOOS == "darwin" {
+		// Claude desktop app bundle
+		if out, _ := exec.Command("pgrep", "-f", "Claude.app/Contents/MacOS/Claude").Output(); len(strings.TrimSpace(string(out))) > 0 {
+			return true, nil
+		}
+	}
+
+	// claude CLI binary (exact name)
+	if out, _ := exec.Command("pgrep", "-x", "claude").Output(); len(strings.TrimSpace(string(out))) > 0 {
+		return true, nil
 	}
 
 	return false, nil
