@@ -9,6 +9,9 @@ import (
 	"strings"
 )
 
+// skipKeychainOps disables keychain operations; set true in tests.
+var skipKeychainOps bool
+
 const claudeKeychainService = "Claude Code-credentials"
 const cemKeychainService = "cem"
 
