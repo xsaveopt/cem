@@ -1,69 +1,92 @@
 # cem — Claude Environment Manager
 
-Manage multiple profiles for AI coding tools. `cem` supports **Claude**, **Gemini**, and **Copilot**, storing named profiles in `~/.config/cem/profiles/<tool>/` and symlinking the active one to the tool's home directory config.
+Launch Claude Code with **isolated, per-profile config and credentials** so you
+can run multiple Claude accounts in parallel from different terminals.
 
-| Tool    | Managed paths                                           |
-| ------- | ------------------------------------------------------- |
-| claude  | `~/.claude`, `~/.claude.json`, macOS Keychain credentials |
-| gemini  | `~/.gemini`                                             |
-| copilot | `~/.copilot`                                            |
+`cem` is a thin launcher. It sets `CLAUDE_CONFIG_DIR` per profile and execs
+`claude`. Claude Code derives its macOS Keychain entry name from a SHA-256
+hash of `CLAUDE_CONFIG_DIR`, so each profile gets its own credential slot
+automatically — no symlinks, no swapping, no clobbering.
 
 ## Install
 
-**Go:**
-
 ```sh
-go install github.com/sratabix/cem/v2@latest
+go install github.com/sratabix/cem/v3@latest
 ```
 
-**Binary:**
-
-Download the latest binary from [Releases](https://github.com/sratabix/cem/releases), then:
-
-```sh
-chmod +x cem-*
-sudo mv cem-* /usr/local/bin/cem
-```
+Or grab a binary from [Releases](https://github.com/sratabix/cem/releases).
 
 ## Usage
 
-All commands accept `--tool` / `-t` to specify which tool to manage. Defaults to `claude`.
-
 ```sh
-cem init                        # import existing ~/.claude config as "default" profile
-cem create <name>               # create a new empty claude profile
-cem switch <name>               # switch active claude profile
-cem list                        # list claude profiles (* = active)
-cem current                     # print active claude profile name
-cem rename <old> <new>          # rename a claude profile
+cem init                  # migrate existing ~/.claude into profile "default"
+cem create work           # add a new profile
+cem ls                    # list profiles
+cem work                  # launch claude with profile "work" (bare shortcut)
+cem run work -- --resume  # explicit form, pass args through
+cem shell work            # subshell with CLAUDE_CONFIG_DIR exported
+cem env work              # eval "$(cem env work)" to export in current shell
+cem token work            # wrap `claude setup-token` for CI use
+cem rename work job       # rename profile (moves keychain entry)
+cem rm job                # delete profile + its keychain entry
 ```
 
-### Managing Gemini profiles
+### Running multiple accounts at once
 
 ```sh
-cem init    -t gemini           # import existing ~/.gemini as "default"
-cem create  -t gemini work      # create a new gemini profile
-cem switch  -t gemini work      # switch active gemini profile
-cem list    -t gemini           # list gemini profiles
-cem current -t gemini           # print active gemini profile name
+# terminal 1
+cem work
+
+# terminal 2 — different account, same time, no conflict
+cem personal
 ```
 
-### Managing Copilot profiles
+### First-time migration
+
+If you already have a `~/.claude` setup, run `cem init` once. It copies your
+existing config into `~/.config/cem/profiles/claude/default/` and copies the
+macOS Keychain credential into the new hashed slot. The source files and the
+original keychain entry are left alone — verify `cem default` launches you in
+without re-login, then remove the originals manually if you like.
+
+### Migrating from cem v2
+
+v2 stored each profile as `<profile>/.claude/` (a subdirectory) because it was
+the symlink target. v3 needs `<profile>/` itself to be the config dir. Run:
 
 ```sh
-cem init    -t copilot          # import existing ~/.copilot as "default"
-cem create  -t copilot work     # create a new copilot profile
-cem switch  -t copilot work     # switch active copilot profile
-cem list    -t copilot          # list copilot profiles
+cem migrate-v2
 ```
 
-`cem switch` will refuse to run if the tool is detected as running (process detection for Claude, lock file detection for all tools).
+This flattens each existing profile (moves `<profile>/.claude/*` up into
+`<profile>/`) and moves macOS Keychain backups from the v2 `cem` service into
+the per-profile hashed slots Claude Code itself reads. It does not delete
+`~/.config/cem/state.json` or any `~/.claude` / `~/.claude.json` symlinks —
+those are reported and you remove them manually once you've verified things
+launch:
 
-### macOS Keychain (Claude)
+```sh
+cem ls                  # confirm profiles still listed
+cem <profile>           # confirm no re-login needed
+rm ~/.claude            # if it's a symlink into ~/.config/cem/profiles
+rm ~/.claude.json       # ditto
+rm ~/.config/cem/state.json
+```
 
-On macOS, Claude Code stores its login credentials in the system Keychain under the service `"Claude Code-credentials"`. When switching Claude profiles, `cem` automatically:
+`migrate-v2` is safe to re-run. Gemini and Copilot support was dropped in v3 —
+their profile dirs under `~/.config/cem/profiles/` are ignored and you can
+delete them manually.
 
-- **Saves** the current profile's credential to a private `cem` Keychain entry.
-- **Restores** the target profile's stored credential as the active one.
+## How it works
 
-If a profile has no stored credential (e.g. a freshly-created profile), the active Keychain entry is cleared so Claude Code will prompt for re-authentication. Keychain errors are non-fatal — a warning is printed but the file-based switch still completes.
+- Profiles live at `~/.config/cem/profiles/claude/<name>/`.
+- `cem <name>` execs `claude` with `CLAUDE_CONFIG_DIR` set to that path.
+- Claude Code reads all its state (settings, history, plugins, MCP, OAuth
+  tokens) from there.
+- On macOS, the keychain service name becomes
+  `Claude Code-credentials-<sha8(path)>` — fully isolated per profile.
+
+## Requirements
+
+- macOS or Linux (Windows untested).
+- `claude` on PATH (or set `CEM_CLAUDE_BIN` to override).

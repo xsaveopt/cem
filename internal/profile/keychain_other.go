@@ -2,5 +2,7 @@
 
 package profile
 
-func SaveClaudeKeychain(_ string) error    { return nil }
-func RestoreClaudeKeychain(_ string) error { return nil }
+func MigrateKeychain(_ string) error          { return nil }
+func RenameKeychain(_ string, _ string) error { return nil }
+func DeleteKeychain(_ string)                 {}
+func migrateV2Keychain(_ string) (bool, error) { return false, nil }

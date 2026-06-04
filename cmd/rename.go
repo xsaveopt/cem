@@ -2,33 +2,21 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/sratabix/cem/v2/internal/profile"
+	"github.com/sratabix/cem/v3/internal/profile"
 )
 
 var renameCmd = &cobra.Command{
 	Use:   "rename <old> <new>",
-	Short: "Rename a profile",
+	Short: "Rename a profile (moves keychain entry too)",
 	Args:  cobra.ExactArgs(2),
-	Run: func(cmd *cobra.Command, args []string) {
-		if err := profile.ValidateTool(toolFlag); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := profile.Rename(args[0], args[1]); err != nil {
+			return err
 		}
-		if err := profile.EnsureToolInitialized(toolFlag); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
-		}
-
-		oldName := args[0]
-		newName := args[1]
-		if err := profile.Rename(toolFlag, oldName, newName); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Renamed %s profile %q to %q.\n", toolFlag, oldName, newName)
+		fmt.Printf("Renamed %q to %q.\n", args[0], args[1])
+		return nil
 	},
 }
 

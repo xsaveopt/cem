@@ -2,32 +2,22 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/sratabix/cem/v2/internal/profile"
+	"github.com/sratabix/cem/v3/internal/profile"
 )
 
 var createCmd = &cobra.Command{
 	Use:   "create <name>",
-	Short: "Create a new empty profile",
+	Short: "Create a new profile",
 	Args:  cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		if err := profile.ValidateTool(toolFlag); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
-		}
-		if err := profile.EnsureToolInitialized(toolFlag); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
-		}
-
+	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
-		if err := profile.Create(toolFlag, name); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
+		if err := profile.Create(name); err != nil {
+			return err
 		}
-		fmt.Printf("Created %s profile %q.\n", toolFlag, name)
+		fmt.Printf("Created profile %q. Launch with: cem %s\n", name, name)
+		return nil
 	},
 }
 

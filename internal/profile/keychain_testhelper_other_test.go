@@ -2,4 +2,10 @@
 
 package profile
 
-func setSkipKeychain(_ bool) {}
+import "testing"
+
+type fakeKeychain struct{ store map[string]string }
+
+func installFakeKeychain(_ *testing.T) *fakeKeychain {
+	return &fakeKeychain{store: map[string]string{}}
+}

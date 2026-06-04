@@ -2,25 +2,24 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/sratabix/cem/v2/internal/profile"
+	"github.com/sratabix/cem/v3/internal/profile"
 )
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize cem for a tool and import existing config as the default profile",
-	Run: func(cmd *cobra.Command, args []string) {
-		if err := profile.ValidateTool(toolFlag); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
+	Short: "Migrate existing ~/.claude into a profile named \"default\"",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := profile.Init(); err != nil {
+			return err
 		}
-		if err := profile.Init(toolFlag); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Initialized cem for %s with 'default' profile.\n", toolFlag)
+		fmt.Println("Migrated existing config into profile \"default\".")
+		fmt.Println("Verify with: cem default")
+		fmt.Println("Once happy, you can remove ~/.claude and ~/.claude.json, and the")
+		fmt.Println("unsuffixed `Claude Code-credentials` keychain entry.")
+		return nil
 	},
 }
 

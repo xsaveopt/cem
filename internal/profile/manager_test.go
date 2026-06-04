@@ -1,7 +1,6 @@
 package profile
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,531 +10,313 @@ func setupTestHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	overrideHome = dir
-	skipSafetyCheck = true
-	setSkipKeychain(true)
-	t.Cleanup(func() {
-		overrideHome = ""
-		skipSafetyCheck = false
-		setSkipKeychain(false)
-	})
+	t.Cleanup(func() { overrideHome = "" })
 	return dir
 }
 
-
-func TestInitClaudeFresh(t *testing.T) {
-	home := setupTestHome(t)
-
-	if err := Init("claude"); err != nil {
-		t.Fatalf("Init(claude) error: %v", err)
+func TestValidateProfileName(t *testing.T) {
+	cases := []struct {
+		name string
+		ok   bool
+	}{
+		{"default", true},
+		{"work-1", true},
+		{"a.b_c-D", true},
+		{"", false},
+		{"has space", false},
+		{"slash/x", false},
+		{"run", false},
+		{"ls", false},
+		{"create", false},
 	}
-
-	state, err := ReadState()
-	if err != nil {
-		t.Fatalf("ReadState() error: %v", err)
+	for _, c := range cases {
+		err := ValidateProfileName(c.name)
+		if c.ok && err != nil {
+			t.Errorf("ValidateProfileName(%q) err = %v, want nil", c.name, err)
+		}
+		if !c.ok && err == nil {
+			t.Errorf("ValidateProfileName(%q) = nil, want error", c.name)
+		}
 	}
-	if state.Active["claude"] != "default" {
-		t.Errorf("state.Active[claude] = %q, want %q", state.Active["claude"], "default")
-	}
-
-	profileDir := ToolProfileDir("claude", "default")
-	assertDirExists(t, filepath.Join(profileDir, ".claude"))
-	assertFileExists(t, filepath.Join(profileDir, ".claude.json"))
-
-	assertSymlinkTarget(t, filepath.Join(home, ".claude"), filepath.Join(profileDir, ".claude"))
-	assertSymlinkTarget(t, filepath.Join(home, ".claude.json"), filepath.Join(profileDir, ".claude.json"))
 }
 
-func TestInitClaudeImportsExisting(t *testing.T) {
-	home := setupTestHome(t)
+func TestCreateSeedsClaudeJSON(t *testing.T) {
+	setupTestHome(t)
+	installFakeKeychain(t)
 
-	claudeDir := filepath.Join(home, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+	if err := Create("work"); err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+
+	dir := ToolProfileDir("work")
+	assertDirExists(t, dir)
+	data, err := os.ReadFile(filepath.Join(dir, ".claude.json"))
+	if err != nil {
+		t.Fatalf("seed .claude.json missing: %v", err)
+	}
+	if string(data) != seedClaudeJSON {
+		t.Errorf(".claude.json = %q, want %q", string(data), seedClaudeJSON)
+	}
+}
+
+func TestCreateDuplicate(t *testing.T) {
+	setupTestHome(t)
+	installFakeKeychain(t)
+	if err := Create("work"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(`{"key":"val"}`), 0644); err != nil {
+	if err := Create("work"); err == nil {
+		t.Fatal("duplicate Create should error")
+	}
+}
+
+func TestCreateRejectsInvalidName(t *testing.T) {
+	setupTestHome(t)
+	if err := Create("run"); err == nil {
+		t.Fatal("Create(reserved-name) should error")
+	}
+	if err := Create("bad/name"); err == nil {
+		t.Fatal("Create(invalid-chars) should error")
+	}
+}
+
+func TestInitFreshNoExistingClaude(t *testing.T) {
+	setupTestHome(t)
+	installFakeKeychain(t)
+
+	if err := Init(); err != nil {
+		t.Fatalf("Init() error: %v", err)
+	}
+
+	dir := ToolProfileDir("default")
+	assertDirExists(t, dir)
+	assertFileExists(t, filepath.Join(dir, ".claude.json"))
+}
+
+func TestInitImportsExistingFlattened(t *testing.T) {
+	home := setupTestHome(t)
+	installFakeKeychain(t)
+
+	claudeDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(filepath.Join(claudeDir, "projects"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeDir, "settings.json"), []byte(`{"k":"v"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claudeDir, "projects", "p.json"), []byte(`{}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(`{"existing":true}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := Init("claude"); err != nil {
-		t.Fatalf("Init(claude) error: %v", err)
+	if err := Init(); err != nil {
+		t.Fatalf("Init() error: %v", err)
 	}
 
-	profileDir := ToolProfileDir("claude", "default")
-
-	data, err := os.ReadFile(filepath.Join(profileDir, ".claude", "settings.json"))
+	dir := ToolProfileDir("default")
+	got, err := os.ReadFile(filepath.Join(dir, "settings.json"))
 	if err != nil {
-		t.Fatalf("imported settings.json missing: %v", err)
+		t.Fatalf("settings.json should be at profile root: %v", err)
 	}
-	if string(data) != `{"key":"val"}` {
-		t.Errorf("settings.json content = %q, want %q", string(data), `{"key":"val"}`)
+	if string(got) != `{"k":"v"}` {
+		t.Errorf("settings.json = %q", string(got))
 	}
-
-	data, err = os.ReadFile(filepath.Join(profileDir, ".claude.json"))
+	if _, err := os.Stat(filepath.Join(dir, "projects", "p.json")); err != nil {
+		t.Errorf("nested file should be preserved: %v", err)
+	}
+	got, err = os.ReadFile(filepath.Join(dir, ".claude.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != `{"existing":true}` {
-		t.Errorf(".claude.json content = %q, want %q", string(data), `{"existing":true}`)
+	if string(got) != `{"existing":true}` {
+		t.Errorf(".claude.json = %q", string(got))
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude")); err == nil {
+		t.Error("Init should not create nested .claude/ — that was the v2 layout")
+	}
+
+	if _, err := os.Stat(claudeDir); err != nil {
+		t.Error("Init should not remove source ~/.claude")
 	}
 }
 
 func TestInitAlreadyInitialized(t *testing.T) {
 	setupTestHome(t)
+	installFakeKeychain(t)
 
-	if err := Init("claude"); err != nil {
-		t.Fatalf("first Init() error: %v", err)
+	if err := Init(); err != nil {
+		t.Fatal(err)
 	}
-
-	err := Init("claude")
-	if err == nil {
-		t.Fatal("second Init(claude) should return error")
+	if err := Init(); err == nil {
+		t.Fatal("second Init should error")
 	}
 }
 
-func TestCreateAndListClaude(t *testing.T) {
+func TestListEmpty(t *testing.T) {
 	setupTestHome(t)
-	if err := Init("claude"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := Create("claude", "work"); err != nil {
-		t.Fatalf("Create() error: %v", err)
-	}
-
-	workDir := ToolProfileDir("claude", "work")
-	assertDirExists(t, filepath.Join(workDir, ".claude"))
-	assertFileExists(t, filepath.Join(workDir, ".claude.json"))
-
-	names, err := List("claude")
+	names, err := List()
 	if err != nil {
 		t.Fatalf("List() error: %v", err)
 	}
-	if len(names) != 2 {
-		t.Fatalf("List() returned %d profiles, want 2", len(names))
-	}
-	if names[0] != "default" || names[1] != "work" {
-		t.Errorf("List() = %v, want [default work]", names)
+	if len(names) != 0 {
+		t.Errorf("List() = %v, want empty", names)
 	}
 }
 
-func TestCreateDuplicate(t *testing.T) {
+func TestListAfterCreate(t *testing.T) {
 	setupTestHome(t)
-	if err := Init("claude"); err != nil {
-		t.Fatal(err)
+	installFakeKeychain(t)
+	for _, n := range []string{"work", "personal", "ci"} {
+		if err := Create(n); err != nil {
+			t.Fatal(err)
+		}
 	}
-
-	err := Create("claude", "default")
-	if err == nil {
-		t.Fatal("Create(claude, default) should return error for duplicate")
-	}
-}
-
-func TestSwitchClaudeProfile(t *testing.T) {
-	home := setupTestHome(t)
-	if err := Init("claude"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Create("claude", "work"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := Switch("claude", "work"); err != nil {
-		t.Fatalf("Switch() error: %v", err)
-	}
-
-	state, err := ReadState()
+	names, err := List()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Active["claude"] != "work" {
-		t.Errorf("state.Active[claude] = %q, want %q", state.Active["claude"], "work")
+	want := []string{"ci", "personal", "work"}
+	if len(names) != 3 || names[0] != want[0] || names[1] != want[1] || names[2] != want[2] {
+		t.Errorf("List() = %v, want %v", names, want)
 	}
-
-	workDir := ToolProfileDir("claude", "work")
-	assertSymlinkTarget(t, filepath.Join(home, ".claude"), filepath.Join(workDir, ".claude"))
-	assertSymlinkTarget(t, filepath.Join(home, ".claude.json"), filepath.Join(workDir, ".claude.json"))
 }
 
-func TestSwitchNonexistent(t *testing.T) {
+func TestRename(t *testing.T) {
 	setupTestHome(t)
-	if err := Init("claude"); err != nil {
+	installFakeKeychain(t)
+	if err := Create("work"); err != nil {
 		t.Fatal(err)
 	}
-
-	err := Switch("claude", "nope")
-	if err == nil {
-		t.Fatal("Switch(nope) should return error")
-	}
-}
-
-func TestRenameActiveProfile(t *testing.T) {
-	home := setupTestHome(t)
-	if err := Init("claude"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := Rename("claude", "default", "personal"); err != nil {
+	if err := Rename("work", "job"); err != nil {
 		t.Fatalf("Rename() error: %v", err)
 	}
-
-	state, err := ReadState()
-	if err != nil {
-		t.Fatal(err)
+	if Exists("work") {
+		t.Error("old profile still exists")
 	}
-	if state.Active["claude"] != "personal" {
-		t.Errorf("state.Active[claude] = %q, want %q", state.Active["claude"], "personal")
-	}
-
-	personalDir := ToolProfileDir("claude", "personal")
-	assertSymlinkTarget(t, filepath.Join(home, ".claude"), filepath.Join(personalDir, ".claude"))
-
-	if _, err := os.Stat(ToolProfileDir("claude", "default")); !os.IsNotExist(err) {
-		t.Error("old profile dir 'default' should not exist after rename")
-	}
-}
-
-func TestRenameInactiveProfile(t *testing.T) {
-	setupTestHome(t)
-	if err := Init("claude"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Create("claude", "work"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := Rename("claude", "work", "office"); err != nil {
-		t.Fatalf("Rename() error: %v", err)
-	}
-
-	state, err := ReadState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Active["claude"] != "default" {
-		t.Errorf("state.Active[claude] = %q, want %q", state.Active["claude"], "default")
-	}
-
-	assertDirExists(t, ToolProfileDir("claude", "office"))
-	if _, err := os.Stat(ToolProfileDir("claude", "work")); !os.IsNotExist(err) {
-		t.Error("old profile dir 'work' should not exist after rename")
+	if !Exists("job") {
+		t.Error("new profile missing")
 	}
 }
 
 func TestRenameNonexistent(t *testing.T) {
 	setupTestHome(t)
-	if err := Init("claude"); err != nil {
-		t.Fatal(err)
-	}
-
-	err := Rename("claude", "nope", "other")
-	if err == nil {
-		t.Fatal("Rename(nope) should return error")
+	installFakeKeychain(t)
+	if err := Rename("nope", "other"); err == nil {
+		t.Fatal("Rename(nope) should error")
 	}
 }
 
 func TestRenameToExisting(t *testing.T) {
 	setupTestHome(t)
-	if err := Init("claude"); err != nil {
+	installFakeKeychain(t)
+	if err := Create("a"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Create("claude", "work"); err != nil {
+	if err := Create("b"); err != nil {
 		t.Fatal(err)
 	}
-
-	err := Rename("claude", "work", "default")
-	if err == nil {
-		t.Fatal("Rename to existing name should return error")
+	if err := Rename("a", "b"); err == nil {
+		t.Fatal("Rename to existing should error")
 	}
 }
 
-func TestCurrentClaude(t *testing.T) {
+func TestDelete(t *testing.T) {
 	setupTestHome(t)
-	if err := Init("claude"); err != nil {
+	installFakeKeychain(t)
+	if err := Create("work"); err != nil {
 		t.Fatal(err)
 	}
-
-	name, err := Current("claude")
-	if err != nil {
-		t.Fatalf("Current() error: %v", err)
+	if err := Delete("work"); err != nil {
+		t.Fatalf("Delete() error: %v", err)
 	}
-	if name != "default" {
-		t.Errorf("Current() = %q, want %q", name, "default")
+	if Exists("work") {
+		t.Error("profile dir still exists after Delete")
 	}
 }
 
-
-func TestInitGeminiFresh(t *testing.T) {
-	home := setupTestHome(t)
-
-	if err := Init("gemini"); err != nil {
-		t.Fatalf("Init(gemini) error: %v", err)
-	}
-
-	state, err := ReadState()
-	if err != nil {
-		t.Fatalf("ReadState() error: %v", err)
-	}
-	if state.Active["gemini"] != "default" {
-		t.Errorf("state.Active[gemini] = %q, want %q", state.Active["gemini"], "default")
-	}
-
-	profileDir := ToolProfileDir("gemini", "default")
-	assertDirExists(t, filepath.Join(profileDir, ".gemini"))
-	assertSymlinkTarget(t, filepath.Join(home, ".gemini"), filepath.Join(profileDir, ".gemini"))
-}
-
-func TestInitGeminiImportsExisting(t *testing.T) {
-	home := setupTestHome(t)
-
-	geminiDir := filepath.Join(home, ".gemini")
-	if err := os.MkdirAll(geminiDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(geminiDir, "config.json"), []byte(`{"gemini":true}`), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := Init("gemini"); err != nil {
-		t.Fatalf("Init(gemini) error: %v", err)
-	}
-
-	profileDir := ToolProfileDir("gemini", "default")
-	data, err := os.ReadFile(filepath.Join(profileDir, ".gemini", "config.json"))
-	if err != nil {
-		t.Fatalf("imported gemini config.json missing: %v", err)
-	}
-	if string(data) != `{"gemini":true}` {
-		t.Errorf("config.json content = %q, want %q", string(data), `{"gemini":true}`)
-	}
-}
-
-func TestCreateAndSwitchGemini(t *testing.T) {
-	home := setupTestHome(t)
-	if err := Init("gemini"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := Create("gemini", "work"); err != nil {
-		t.Fatalf("Create(gemini, work) error: %v", err)
-	}
-
-	workDir := ToolProfileDir("gemini", "work")
-	assertDirExists(t, filepath.Join(workDir, ".gemini"))
-
-	if err := Switch("gemini", "work"); err != nil {
-		t.Fatalf("Switch(gemini, work) error: %v", err)
-	}
-
-	state, err := ReadState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Active["gemini"] != "work" {
-		t.Errorf("state.Active[gemini] = %q, want %q", state.Active["gemini"], "work")
-	}
-	assertSymlinkTarget(t, filepath.Join(home, ".gemini"), filepath.Join(workDir, ".gemini"))
-}
-
-
-func TestInitCopilotFresh(t *testing.T) {
-	home := setupTestHome(t)
-
-	if err := Init("copilot"); err != nil {
-		t.Fatalf("Init(copilot) error: %v", err)
-	}
-
-	state, err := ReadState()
-	if err != nil {
-		t.Fatalf("ReadState() error: %v", err)
-	}
-	if state.Active["copilot"] != "default" {
-		t.Errorf("state.Active[copilot] = %q, want %q", state.Active["copilot"], "default")
-	}
-
-	profileDir := ToolProfileDir("copilot", "default")
-	assertDirExists(t, filepath.Join(profileDir, ".copilot"))
-	assertSymlinkTarget(t, filepath.Join(home, ".copilot"), filepath.Join(profileDir, ".copilot"))
-}
-
-func TestInitCopilotImportsExisting(t *testing.T) {
-	home := setupTestHome(t)
-
-	copilotDir := filepath.Join(home, ".copilot")
-	if err := os.MkdirAll(copilotDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(copilotDir, "hosts.json"), []byte(`{"copilot":true}`), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := Init("copilot"); err != nil {
-		t.Fatalf("Init(copilot) error: %v", err)
-	}
-
-	profileDir := ToolProfileDir("copilot", "default")
-	data, err := os.ReadFile(filepath.Join(profileDir, ".copilot", "hosts.json"))
-	if err != nil {
-		t.Fatalf("imported copilot hosts.json missing: %v", err)
-	}
-	if string(data) != `{"copilot":true}` {
-		t.Errorf("hosts.json content = %q, want %q", string(data), `{"copilot":true}`)
-	}
-}
-
-func TestCreateAndSwitchCopilot(t *testing.T) {
-	home := setupTestHome(t)
-	if err := Init("copilot"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := Create("copilot", "work"); err != nil {
-		t.Fatalf("Create(copilot, work) error: %v", err)
-	}
-
-	workDir := ToolProfileDir("copilot", "work")
-	assertDirExists(t, filepath.Join(workDir, ".copilot"))
-
-	if err := Switch("copilot", "work"); err != nil {
-		t.Fatalf("Switch(copilot, work) error: %v", err)
-	}
-
-	state, err := ReadState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Active["copilot"] != "work" {
-		t.Errorf("state.Active[copilot] = %q, want %q", state.Active["copilot"], "work")
-	}
-	assertSymlinkTarget(t, filepath.Join(home, ".copilot"), filepath.Join(workDir, ".copilot"))
-}
-
-
-func TestToolsAreIndependent(t *testing.T) {
-	home := setupTestHome(t)
-
-	if err := Init("claude"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Init("gemini"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := Create("claude", "work"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Switch("claude", "work"); err != nil {
-		t.Fatal(err)
-	}
-
-	state, err := ReadState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.Active["claude"] != "work" {
-		t.Errorf("claude active = %q, want %q", state.Active["claude"], "work")
-	}
-	if state.Active["gemini"] != "default" {
-		t.Errorf("gemini active = %q, want %q", state.Active["gemini"], "default")
-	}
-
-	claudeWorkDir := ToolProfileDir("claude", "work")
-	geminiDefaultDir := ToolProfileDir("gemini", "default")
-	assertSymlinkTarget(t, filepath.Join(home, ".claude"), filepath.Join(claudeWorkDir, ".claude"))
-	assertSymlinkTarget(t, filepath.Join(home, ".gemini"), filepath.Join(geminiDefaultDir, ".gemini"))
-}
-
-func TestInvalidTool(t *testing.T) {
+func TestDeleteNonexistent(t *testing.T) {
 	setupTestHome(t)
-
-	err := Init("vscode")
-	if err == nil {
-		t.Fatal("Init(vscode) should return error for unknown tool")
+	if err := Delete("nope"); err == nil {
+		t.Fatal("Delete(nope) should error")
 	}
 }
 
-
-func TestStateRoundTrip(t *testing.T) {
+func TestProfilePathDistinct(t *testing.T) {
 	setupTestHome(t)
-	if err := os.MkdirAll(CemDir(), 0755); err != nil {
+	if ProfilePath("work") == ProfilePath("personal") {
+		t.Error("different names should give different paths")
+	}
+}
+
+func TestMigrateV2FlattensNestedClaude(t *testing.T) {
+	setupTestHome(t)
+	installFakeKeychain(t)
+
+	dir := ToolProfileDir("work")
+	nested := filepath.Join(dir, ".claude")
+	if err := os.MkdirAll(filepath.Join(nested, "projects"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "settings.json"), []byte(`{"v2":1}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "projects", "x.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(`{"outer":true}`), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	original := &State{Active: map[string]string{
-		"claude":  "personal",
-		"gemini":  "work",
-		"copilot": "default",
-	}}
-	if err := WriteState(original); err != nil {
-		t.Fatalf("WriteState() error: %v", err)
-	}
-
-	loaded, err := ReadState()
+	rep, err := MigrateV2()
 	if err != nil {
-		t.Fatalf("ReadState() error: %v", err)
+		t.Fatalf("MigrateV2: %v", err)
 	}
-	for tool, want := range original.Active {
-		if loaded.Active[tool] != want {
-			t.Errorf("loaded.Active[%s] = %q, want %q", tool, loaded.Active[tool], want)
-		}
+	if len(rep.Flattened) != 1 || rep.Flattened[0] != "work" {
+		t.Errorf("Flattened = %v, want [work]", rep.Flattened)
 	}
 
-	data, _ := os.ReadFile(StatePath())
-	var raw map[string]interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Errorf("state.json is not valid JSON: %v", err)
+	got, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatalf("settings.json should be flattened: %v", err)
 	}
-}
-
-func TestEnsureToolInitializedRunsInit(t *testing.T) {
-	setupTestHome(t)
-
-	if err := EnsureToolInitialized("claude"); err != nil {
-		t.Fatalf("EnsureToolInitialized(claude) error: %v", err)
+	if string(got) != `{"v2":1}` {
+		t.Errorf("settings.json = %q", string(got))
 	}
-
-	if !IsToolInitialized("claude") {
-		t.Error("claude should be initialized after EnsureToolInitialized")
+	if _, err := os.Stat(filepath.Join(dir, "projects", "x.json")); err != nil {
+		t.Errorf("nested file lost: %v", err)
 	}
-}
-
-func TestEnsureToolInitializedPerTool(t *testing.T) {
-	setupTestHome(t)
-
-	if err := EnsureToolInitialized("gemini"); err != nil {
-		t.Fatalf("EnsureToolInitialized(gemini) error: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, ".claude")); err == nil {
+		t.Error(".claude/ should be removed after flatten")
 	}
 
-	if !IsToolInitialized("gemini") {
-		t.Error("gemini should be initialized")
-	}
-	if IsToolInitialized("claude") {
-		t.Error("claude should NOT be initialized")
-	}
-}
-
-func TestRemoveIfSymlinkRefusesRealFile(t *testing.T) {
-	dir := t.TempDir()
-	realFile := filepath.Join(dir, "realfile")
-	if err := os.WriteFile(realFile, []byte("data"), 0644); err != nil {
+	got, err = os.ReadFile(filepath.Join(dir, ".claude.json"))
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	err := removeIfSymlink(realFile)
-	if err == nil {
-		t.Fatal("removeIfSymlink should refuse to remove a real file")
+	if string(got) != `{"outer":true}` {
+		t.Errorf("outer .claude.json should win conflict, got %q", string(got))
 	}
 }
 
-func TestRemoveIfSymlinkHandlesMissing(t *testing.T) {
-	err := removeIfSymlink("/nonexistent/path/that/does/not/exist")
+func TestMigrateV2Idempotent(t *testing.T) {
+	setupTestHome(t)
+	installFakeKeychain(t)
+	if err := Create("work"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MigrateV2(); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := MigrateV2()
 	if err != nil {
-		t.Fatalf("removeIfSymlink should return nil for missing path, got: %v", err)
+		t.Fatal(err)
+	}
+	if len(rep.Flattened) != 0 {
+		t.Errorf("second run should be a no-op, got %v", rep.Flattened)
 	}
 }
-
 
 func assertDirExists(t *testing.T, path string) {
 	t.Helper()
@@ -558,17 +339,5 @@ func assertFileExists(t *testing.T, path string) {
 	}
 	if info.IsDir() {
 		t.Errorf("expected %s to be a file, got directory", path)
-	}
-}
-
-func assertSymlinkTarget(t *testing.T, link, wantTarget string) {
-	t.Helper()
-	got, err := os.Readlink(link)
-	if err != nil {
-		t.Errorf("expected %s to be a symlink: %v", link, err)
-		return
-	}
-	if got != wantTarget {
-		t.Errorf("symlink %s -> %q, want %q", link, got, wantTarget)
 	}
 }

@@ -1,230 +1,84 @@
 package profile
 
 import (
-	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 )
 
-
-type State struct {
-	Active map[string]string `json:"active"`
-}
-
-func ReadState() (*State, error) {
-	data, err := os.ReadFile(StatePath())
-	if err != nil {
-		return nil, err
-	}
-	var s State
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, fmt.Errorf("invalid state.json: %w", err)
-	}
-	if s.Active == nil {
-		s.Active = make(map[string]string)
-	}
-	return &s, nil
-}
-
-func WriteState(s *State) error {
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(StatePath(), data, 0644)
-}
+const seedClaudeJSON = `{"hasCompletedOnboarding":true}`
 
 func IsInitialized() bool {
-	_, err := os.Stat(CemDir())
+	_, err := os.Stat(ToolProfilesDir())
 	return err == nil
 }
 
-func IsToolInitialized(tool string) bool {
-	_, err := os.Stat(ToolProfilesDir(tool))
-	return err == nil
-}
-
-func Init(tool string) error {
-	t, ok := Tools[tool]
-	if !ok {
-		return ValidateTool(tool)
+func Init() error {
+	if IsInitialized() {
+		return fmt.Errorf("cem already initialized (found %s)", ToolProfilesDir())
 	}
 
-	if IsToolInitialized(tool) {
-		return fmt.Errorf("%s profiles already initialized (found %s)", tool, ToolProfilesDir(tool))
-	}
-
-	profileDir := ToolProfileDir(tool, "default")
-	if err := os.MkdirAll(profileDir, 0755); err != nil {
-		return fmt.Errorf("failed to create profile directory: %w", err)
-	}
-
-	for _, item := range t.Items {
-		src := homePath(item.name)
-		dst := filepath.Join(profileDir, item.name)
-		if err := importOrCreate(src, dst, item.isDir); err != nil {
-			return err
-		}
-	}
-
-	if err := createSymlinks(tool, "default"); err != nil {
+	const name = "default"
+	if err := ValidateProfileName(name); err != nil {
 		return err
 	}
 
-	state := &State{Active: make(map[string]string)}
-	if IsInitialized() {
-		existing, err := ReadState()
-		if err == nil {
-			state = existing
-		}
-	}
-	state.Active[tool] = "default"
-	return WriteState(state)
-}
-
-func importOrCreate(src, dst string, isDir bool) error {
-	info, err := os.Lstat(src)
-	if err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			if err := os.Remove(src); err != nil {
-				return fmt.Errorf("failed to remove existing symlink %s: %w", src, err)
-			}
-			return createEmpty(dst, isDir)
-		}
-		if err := os.Rename(src, dst); err != nil {
-			return fmt.Errorf("failed to move %s to %s: %w", src, dst, err)
-		}
-		return nil
-	}
-
-	if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to stat %s: %w", src, err)
-	}
-
-	return createEmpty(dst, isDir)
-}
-
-func createEmpty(path string, isDir bool) error {
-	if isDir {
-		return os.MkdirAll(path, 0755)
-	}
-	return os.WriteFile(path, []byte("{}"), 0644)
-}
-
-func Create(tool, name string) error {
-	t, ok := Tools[tool]
-	if !ok {
-		return ValidateTool(tool)
-	}
-
-	dir := ToolProfileDir(tool, name)
-	if _, err := os.Stat(dir); err == nil {
-		return fmt.Errorf("%s profile %q already exists", tool, name)
-	}
-
+	dir := ToolProfileDir(name)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create profile directory: %w", err)
 	}
 
-	for _, item := range t.Items {
-		path := filepath.Join(dir, item.name)
-		if err := createEmpty(path, item.isDir); err != nil {
+	srcDir := filepath.Join(homeDir(), ClaudeTool.HomeDir)
+	if err := copyDirContents(srcDir, dir); err != nil {
+		return err
+	}
+
+	srcJSON := filepath.Join(homeDir(), ".claude.json")
+	dstJSON := filepath.Join(dir, ".claude.json")
+	if err := copyIfExists(srcJSON, dstJSON); err != nil {
+		return err
+	}
+	if _, err := os.Stat(dstJSON); os.IsNotExist(err) {
+		if err := os.WriteFile(dstJSON, []byte(seedClaudeJSON), 0644); err != nil {
 			return err
 		}
 	}
 
+	if err := MigrateKeychain(name); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: keychain migration failed: %v\n", err)
+	}
 	return nil
 }
 
-func Switch(tool, name string) error {
-	t, ok := Tools[tool]
-	if !ok {
-		return ValidateTool(tool)
-	}
-
-	if err := CheckSafe(tool); err != nil {
+func Create(name string) error {
+	if err := ValidateProfileName(name); err != nil {
 		return err
 	}
-
-	dir := ToolProfileDir(tool, name)
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return fmt.Errorf("%s profile %q does not exist", tool, name)
-	}
-
-	state, err := ReadState()
-	if err != nil {
-		return err
-	}
-	currentProfile := state.Active[tool]
-
-	// Back up the current profile's keychain credential before switching.
-	if tool == "claude" && currentProfile != "" && currentProfile != name {
-		if err := SaveClaudeKeychain(currentProfile); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save keychain credentials for profile %q: %v\n", currentProfile, err)
-		}
-	}
-
-	for _, item := range t.Items {
-		if err := removeIfSymlink(homePath(item.name)); err != nil {
+	if !IsInitialized() {
+		if err := os.MkdirAll(ToolProfilesDir(), 0755); err != nil {
 			return err
 		}
 	}
-
-	if err := createSymlinks(tool, name); err != nil {
-		return err
+	dir := ToolProfileDir(name)
+	if _, err := os.Stat(dir); err == nil {
+		return fmt.Errorf("profile %q already exists", name)
 	}
-
-	// Restore the target profile's keychain credential.
-	if tool == "claude" && currentProfile != name {
-		if err := RestoreClaudeKeychain(name); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to restore keychain credentials for profile %q: %v\n", name, err)
-		}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create profile directory: %w", err)
 	}
-
-	state.Active[tool] = name
-	return WriteState(state)
+	return os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(seedClaudeJSON), 0644)
 }
 
-func removeIfSymlink(path string) error {
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
+func List() ([]string, error) {
+	entries, err := os.ReadDir(ToolProfilesDir())
 	if err != nil {
-		return fmt.Errorf("failed to stat %s: %w", path, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return os.Remove(path)
-	}
-	return fmt.Errorf("%s exists but is not a symlink — refusing to remove (run 'cem init --tool <tool>' first)", path)
-}
-
-func createSymlinks(tool, name string) error {
-	t := Tools[tool]
-	dir := ToolProfileDir(tool, name)
-
-	for _, item := range t.Items {
-		target := filepath.Join(dir, item.name)
-		link := homePath(item.name)
-		if err := os.Symlink(target, link); err != nil {
-			return fmt.Errorf("failed to create symlink for %s: %w", item.name, err)
+		if os.IsNotExist(err) {
+			return nil, nil
 		}
-	}
-	return nil
-}
-
-func List(tool string) ([]string, error) {
-	if err := ValidateTool(tool); err != nil {
-		return nil, err
-	}
-
-	entries, err := os.ReadDir(ToolProfilesDir(tool))
-	if err != nil {
 		return nil, fmt.Errorf("failed to read profiles directory: %w", err)
 	}
-
 	var names []string
 	for _, e := range entries {
 		if e.IsDir() {
@@ -235,66 +89,185 @@ func List(tool string) ([]string, error) {
 	return names, nil
 }
 
-func Current(tool string) (string, error) {
-	if err := ValidateTool(tool); err != nil {
-		return "", err
-	}
-
-	state, err := ReadState()
-	if err != nil {
-		return "", fmt.Errorf("failed to read state: %w", err)
-	}
-	active, ok := state.Active[tool]
-	if !ok {
-		return "", fmt.Errorf("no active profile for %s (run 'cem init --tool %s' first)", tool, tool)
-	}
-	return active, nil
+func Exists(name string) bool {
+	_, err := os.Stat(ToolProfileDir(name))
+	return err == nil
 }
 
-func Rename(tool, oldName, newName string) error {
-	t, ok := Tools[tool]
-	if !ok {
-		return ValidateTool(tool)
+func Rename(oldName, newName string) error {
+	if err := ValidateProfileName(newName); err != nil {
+		return err
 	}
-
-	oldDir := ToolProfileDir(tool, oldName)
-	newDir := ToolProfileDir(tool, newName)
+	oldDir := ToolProfileDir(oldName)
+	newDir := ToolProfileDir(newName)
 
 	if _, err := os.Stat(oldDir); os.IsNotExist(err) {
-		return fmt.Errorf("%s profile %q does not exist", tool, oldName)
+		return fmt.Errorf("profile %q does not exist", oldName)
 	}
 	if _, err := os.Stat(newDir); err == nil {
-		return fmt.Errorf("%s profile %q already exists", tool, newName)
+		return fmt.Errorf("profile %q already exists", newName)
+	}
+
+	if err := RenameKeychain(oldName, newName); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: keychain rename failed: %v\n", err)
 	}
 
 	if err := os.Rename(oldDir, newDir); err != nil {
 		return fmt.Errorf("failed to rename profile: %w", err)
 	}
-
-	state, err := ReadState()
-	if err != nil {
-		return err
-	}
-	if state.Active[tool] == oldName {
-		for _, item := range t.Items {
-			if err := removeIfSymlink(homePath(item.name)); err != nil {
-				return err
-			}
-		}
-		if err := createSymlinks(tool, newName); err != nil {
-			return err
-		}
-		state.Active[tool] = newName
-		return WriteState(state)
-	}
-
 	return nil
 }
 
-func EnsureToolInitialized(tool string) error {
-	if !IsToolInitialized(tool) {
-		fmt.Printf("cem not initialized for %s. Running first-time setup...\n", tool)
-		return Init(tool)
+type V2Report struct {
+	Flattened     []string
+	KeychainMoved []string
+	SymlinksFound []string
+}
+
+func MigrateV2() (*V2Report, error) {
+	rep := &V2Report{}
+	names, err := List()
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		dir := ToolProfileDir(name)
+		nested := filepath.Join(dir, ClaudeTool.HomeDir)
+		if info, err := os.Stat(nested); err == nil && info.IsDir() {
+			if err := flattenNestedClaude(dir, nested); err != nil {
+				return nil, fmt.Errorf("flatten %s: %w", name, err)
+			}
+			rep.Flattened = append(rep.Flattened, name)
+		}
+		if moved, err := migrateV2Keychain(name); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: keychain migration failed for %s: %v\n", name, err)
+		} else if moved {
+			rep.KeychainMoved = append(rep.KeychainMoved, name)
+		}
+	}
+	for _, p := range []string{
+		filepath.Join(homeDir(), ClaudeTool.HomeDir),
+		filepath.Join(homeDir(), ".claude.json"),
+	} {
+		if info, err := os.Lstat(p); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			rep.SymlinksFound = append(rep.SymlinksFound, p)
+		}
+	}
+	return rep, nil
+}
+
+func flattenNestedClaude(dir, nested string) error {
+	entries, err := os.ReadDir(nested)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		from := filepath.Join(nested, e.Name())
+		to := filepath.Join(dir, e.Name())
+		if _, err := os.Lstat(to); err == nil {
+			if err := os.RemoveAll(from); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := os.Rename(from, to); err != nil {
+			return err
+		}
+	}
+	return os.Remove(nested)
+}
+
+func Delete(name string) error {
+	dir := ToolProfileDir(name)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return fmt.Errorf("profile %q does not exist", name)
+	}
+	DeleteKeychain(name)
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("failed to remove profile directory: %w", err)
 	}
 	return nil
+}
+
+func copyDirContents(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		from := filepath.Join(src, e.Name())
+		to := filepath.Join(dst, e.Name())
+		if _, err := os.Lstat(to); err == nil {
+			continue
+		}
+		if err := copyIfExists(from, to); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyIfExists(src, dst string) error {
+	info, err := os.Lstat(src)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	if info.IsDir() {
+		return copyTree(src, dst)
+	}
+	return copyFile(src, dst, info.Mode())
+}
+
+func copyTree(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode())
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		}
+		return copyFile(path, target, info.Mode())
+	})
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
 }

@@ -2,45 +2,29 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/sratabix/cem/v2/internal/profile"
+	"github.com/sratabix/cem/v3/internal/profile"
 )
 
 var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"ls"},
-	Short:   "List all profiles for a tool",
-	Run: func(cmd *cobra.Command, args []string) {
-		if err := profile.ValidateTool(toolFlag); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
-		}
-		if err := profile.EnsureToolInitialized(toolFlag); err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
-		}
-
-		names, err := profile.List(toolFlag)
+	Short:   "List profiles",
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		names, err := profile.List()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
+			return err
 		}
-
-		current, err := profile.Current(toolFlag)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Error:", err)
-			os.Exit(1)
+		if len(names) == 0 {
+			fmt.Println("No profiles. Create one with: cem create <name>")
+			return nil
 		}
-
-		for _, name := range names {
-			if name == current {
-				fmt.Printf("* %s\n", name)
-			} else {
-				fmt.Printf("  %s\n", name)
-			}
+		for _, n := range names {
+			fmt.Println(n)
 		}
+		return nil
 	},
 }
 
