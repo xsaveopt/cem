@@ -8,25 +8,47 @@ on:
 permissions:
   contents: write
 
+env:
+  VT_API_KEY: ${{ secrets.VT_API_KEY }}
+
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
       - name: Build release binaries
         run: make cross
 
+      - name: Scan with VirusTotal
+        if: ${{ env.VT_API_KEY != '' }}
+        uses: crazy-max/ghaction-virustotal@v5
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          request_rate: 4
+          files: bin/*
+
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          notes_args=(--generate-notes)
+          if [ -n "$VT_API_KEY" ]; then
+            {
+              echo "### VirusTotal scans"
+              for f in bin/*; do
+                sha=$(sha256sum "$f" | cut -d ' ' -f1)
+                echo "- [$(basename "$f")](https://www.virustotal.com/gui/file/$sha)"
+              done
+            } > vt-notes.md
+            notes_args=(--notes-file vt-notes.md --generate-notes)
+          fi
           gh release create "$GITHUB_REF_NAME" bin/* \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes
+            "${notes_args[@]}"
