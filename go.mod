@@ -1,4 +1,4 @@
-module github.com/sratabix/cem/v3
+module github.com/xsaveopt/cem/v3
 
 go 1.25.8
 

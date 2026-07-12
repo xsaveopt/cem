@@ -6,7 +6,7 @@ import (
 	"runtime/debug"
 
 	"github.com/spf13/cobra"
-	"github.com/sratabix/cem/v3/internal/profile"
+	"github.com/xsaveopt/cem/v3/internal/profile"
 )
 
 var version = ""

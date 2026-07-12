@@ -1,6 +1,6 @@
 package main
 
-import "github.com/sratabix/cem/v3/cmd"
+import "github.com/xsaveopt/cem/v3/cmd"
 
 func main() {
 	cmd.Execute()

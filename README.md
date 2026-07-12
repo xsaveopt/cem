@@ -11,10 +11,10 @@ automatically — no symlinks, no swapping, no clobbering.
 ## Install
 
 ```sh
-go install github.com/sratabix/cem/v3@latest
+go install github.com/xsaveopt/cem/v3@latest
 ```
 
-Or grab a binary from [Releases](https://github.com/sratabix/cem/releases).
+Or grab a binary from [Releases](https://github.com/xsaveopt/cem/releases).
 
 ## Usage
 

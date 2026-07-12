@@ -1,4 +1,4 @@
-MODULE  := github.com/sratabix/cem/v3
+MODULE  := github.com/xsaveopt/cem/v3
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X $(MODULE)/cmd.version=$(VERSION)
 BIN     := bin
