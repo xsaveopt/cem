@@ -25,7 +25,6 @@ var reservedNames = map[string]bool{
 	"init": true, "create": true, "list": true, "ls": true, "rename": true,
 	"rm": true, "delete": true, "run": true, "shell": true, "env": true,
 	"token": true, "help": true, "version": true, "completion": true,
-	"migrate-v2": true,
 }
 
 func ValidateProfileName(name string) error {

@@ -80,31 +80,6 @@ func TestRenameKeychainMovesEntry(t *testing.T) {
 	}
 }
 
-func TestMigrateV2KeychainMovesBackup(t *testing.T) {
-	setupTestHome(t)
-	fk := installFakeKeychain(t)
-	if err := Create("work"); err != nil {
-		t.Fatal(err)
-	}
-	fk.store[fk.key("cem", "claude:work")] = "v2-token"
-
-	rep, err := MigrateV2()
-	if err != nil {
-		t.Fatalf("MigrateV2: %v", err)
-	}
-	if len(rep.KeychainMoved) != 1 || rep.KeychainMoved[0] != "work" {
-		t.Errorf("KeychainMoved = %v, want [work]", rep.KeychainMoved)
-	}
-
-	acct := claudeKeychainAccount()
-	if got := fk.store[fk.key(claudeServiceName("work"), acct)]; got != "v2-token" {
-		t.Errorf("v3 slot = %q, want v2-token", got)
-	}
-	if _, ok := fk.store[fk.key("cem", "claude:work")]; ok {
-		t.Error("v2 backup should be deleted after migration")
-	}
-}
-
 func TestDeleteKeychainRemovesEntry(t *testing.T) {
 	setupTestHome(t)
 	fk := installFakeKeychain(t)

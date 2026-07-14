@@ -118,65 +118,6 @@ func Rename(oldName, newName string) error {
 	return nil
 }
 
-type V2Report struct {
-	Flattened     []string
-	KeychainMoved []string
-	SymlinksFound []string
-}
-
-func MigrateV2() (*V2Report, error) {
-	rep := &V2Report{}
-	names, err := List()
-	if err != nil {
-		return nil, err
-	}
-	for _, name := range names {
-		dir := ToolProfileDir(name)
-		nested := filepath.Join(dir, ClaudeTool.HomeDir)
-		if info, err := os.Stat(nested); err == nil && info.IsDir() {
-			if err := flattenNestedClaude(dir, nested); err != nil {
-				return nil, fmt.Errorf("flatten %s: %w", name, err)
-			}
-			rep.Flattened = append(rep.Flattened, name)
-		}
-		if moved, err := migrateV2Keychain(name); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: keychain migration failed for %s: %v\n", name, err)
-		} else if moved {
-			rep.KeychainMoved = append(rep.KeychainMoved, name)
-		}
-	}
-	for _, p := range []string{
-		filepath.Join(homeDir(), ClaudeTool.HomeDir),
-		filepath.Join(homeDir(), ".claude.json"),
-	} {
-		if info, err := os.Lstat(p); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			rep.SymlinksFound = append(rep.SymlinksFound, p)
-		}
-	}
-	return rep, nil
-}
-
-func flattenNestedClaude(dir, nested string) error {
-	entries, err := os.ReadDir(nested)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		from := filepath.Join(nested, e.Name())
-		to := filepath.Join(dir, e.Name())
-		if _, err := os.Lstat(to); err == nil {
-			if err := os.RemoveAll(from); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := os.Rename(from, to); err != nil {
-			return err
-		}
-	}
-	return os.Remove(nested)
-}
-
 func Delete(name string) error {
 	dir := ToolProfileDir(name)
 	if _, err := os.Stat(dir); os.IsNotExist(err) {

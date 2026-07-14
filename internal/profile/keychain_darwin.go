@@ -89,20 +89,3 @@ func RenameKeychain(oldName, newName string) error {
 func DeleteKeychain(name string) {
 	keychainDelete(claudeServiceName(name), claudeKeychainAccount())
 }
-
-func migrateV2Keychain(name string) (bool, error) {
-	const v2Service = "cem"
-	v2Account := "claude:" + name
-	password, err := keychainRead(v2Service, v2Account)
-	if err != nil {
-		return false, err
-	}
-	if password == "" {
-		return false, nil
-	}
-	if err := keychainWrite(claudeServiceName(name), claudeKeychainAccount(), password); err != nil {
-		return false, err
-	}
-	keychainDelete(v2Service, v2Account)
-	return true, nil
-}

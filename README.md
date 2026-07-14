@@ -49,34 +49,6 @@ macOS Keychain credential into the new hashed slot. The source files and the
 original keychain entry are left alone — verify `cem default` launches you in
 without re-login, then remove the originals manually if you like.
 
-### Migrating from cem v2
-
-v2 stored each profile as `<profile>/.claude/` (a subdirectory) because it was
-the symlink target. v3 needs `<profile>/` itself to be the config dir. Run:
-
-```sh
-cem migrate-v2
-```
-
-This flattens each existing profile (moves `<profile>/.claude/*` up into
-`<profile>/`) and moves macOS Keychain backups from the v2 `cem` service into
-the per-profile hashed slots Claude Code itself reads. It does not delete
-`~/.config/cem/state.json` or any `~/.claude` / `~/.claude.json` symlinks —
-those are reported and you remove them manually once you've verified things
-launch:
-
-```sh
-cem ls                  # confirm profiles still listed
-cem <profile>           # confirm no re-login needed
-rm ~/.claude            # if it's a symlink into ~/.config/cem/profiles
-rm ~/.claude.json       # ditto
-rm ~/.config/cem/state.json
-```
-
-`migrate-v2` is safe to re-run. Gemini and Copilot support was dropped in v3 —
-their profile dirs under `~/.config/cem/profiles/` are ignored and you can
-delete them manually.
-
 ## How it works
 
 - Profiles live at `~/.config/cem/profiles/claude/<name>/`.
